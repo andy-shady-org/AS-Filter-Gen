@@ -1,13 +1,13 @@
 #!/usr/bin/env perl
 # route filter generator
 #
-# This script works by querying the IBIS mysql cluster
+# This script works by querying a mysql cluster
 # for peers and their AS-SET or ASN.
 # It then generates a list of valid prefixes for each peer
 # and compares this to a previous version, looking for updates.
 #
 # If changes are found, it then emails a complete updated prefix list
-# for the peer, also generating an XLM config to be uploaded to the router.
+# for the peer, also generating an XML config to be uploaded to the router.
 # 
 # Files:
 #

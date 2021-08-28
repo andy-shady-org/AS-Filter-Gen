@@ -18,7 +18,7 @@
 #
 # Example:
 #  filtergen -f list.txt -t cisco -p blah
-#  filtergen -f AS-IBIS -t Juniper -p import-ebgp-ipv4-AS-IBIS
+#  filtergen -f AS-TECHNOLABS -t Juniper -p import-ebgp-ipv4-AS-TECHNOLABS
 #
 # written by andy@shady.org
 #

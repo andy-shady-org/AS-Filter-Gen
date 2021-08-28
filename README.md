@@ -1,3 +1,6 @@
+!!!! WARNING - This code is 20 years old, and probably doesnt work, its showing a concept of generating filters based on RIPE DB objects !!!!!!!!
+
+
 README
 
 writen by andy@shady.org

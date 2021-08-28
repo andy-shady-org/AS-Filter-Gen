@@ -1,0 +1,110 @@
+#!/usr/bin/env perl
+# route filter generator
+#
+# This script works by querying the IBIS mysql cluster
+# for peers and their AS-SET or ASN.
+# It then generates a list of valid prefixes for each peer
+# and compares this to a previous version, looking for updates.
+#
+# If changes are found, it then emails a complete updated prefix list
+# for the peer, also generating an XLM config to be uploaded to the router.
+# 
+# Files:
+#
+# filtergen - main code, run from cron
+# config.pl - contains configuration info (edit to suit your needs)
+#
+# written by andy@shady.org
+#
+# Requires: asused (/usr/ports/net-mgmt/asused)
+
+# define debug if required
+$debug=1;
+
+use Whois; # asused whois module
+use DBI;
+use lib "./lib";
+use FilterGen;
+
+getconfigs();
+
+# Setup SQL stuff and get details
+$dbh = DBI->connect("DBI:mysql:$sqldbase:$sqlhost", $sqluser, $sqlpass);
+$c1  = "SELECT DISTINCT ASN, AS_SET from peer_details where Type='IXP'";
+$cmd = $dbh->prepare($c1);
+$cmd->execute;
+$rows = $cmd->rows;
+
+# open IRR DB connection only once
+$whois = new Whois('Host' => 'whois.ripe.net');
+die("Failed to create object") unless(ref($whois));
+die($whois->GetError()) if($whois->GetError());
+
+# Now step through SQL rows
+# We have to do everyting within this loop
+for ($i = 0; $i < $rows; $i++)
+{
+
+  my %asnhash=();
+  my %assetlist=();
+  my %processed_assetlist=();
+  my %prefixes=();
+  my @addedprefixes=(); 
+  my @deletedprefixes=();
+  my @xmlprefixes=();
+ 
+ ($asn,$asset) = $cmd->fetchrow_array;
+
+  if($asset ne "") # blank field
+  {
+    # populate as set array
+    $asn="AS$asn";
+    $assetlist{$asset}=$asset;
+
+    # now do the do on that as-set
+    # repopulate within the array
+    while (values(%assetlist) > 0)
+    {
+      my $key=();
+      foreach $key (keys (%assetlist))
+      {
+        if($debug)
+        {
+          print "$assetlist{$key} [Top Level]\n";
+	}
+	&queryASset($key);
+        $processed_assetlist{$key}=$key;
+        delete $assetlist{$key};
+      }
+    }
+
+    # now we should have a list of ASNs
+    # grab the prefixes for all AS-sets
+    &processASNlist(%asnhash);
+  }
+  else
+  {
+    # no as set, populate ASN array
+    $asn="AS$asn";
+    if($debug)
+    {
+      print("$asn [Top Level]\n");
+    }
+    &processSingleASN($asn);
+  }
+  
+  # now we have a list of prefixes
+  # check for previous runs and diff
+  &checklast(%prefixes);
+
+  # Email the output and generate the XML template
+  &emailresult(@addedprefixes, @deletedprefixes);
+  &outputxml(@xmlprefixes);
+
+  undef(@prefixes);
+  undef(@addedprefixes);
+  undef(@deletedprefixes);
+  undef(@xmlprefixes);
+}
+
+$whois->Close();

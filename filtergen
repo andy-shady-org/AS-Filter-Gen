@@ -1,0 +1,268 @@
+#!/usr/bin/env perl
+# route filter generator
+# This script works in two ways.
+# It takes a file containing a list of prefixes:
+#  Example:
+#  192.168.1.0/24
+#  192.168.1.1/24
+#  192.168.1.2/24
+#
+# followed by the type of router
+# 
+# or
+#
+# It takes AS-SET Macro as arguement and makes a query of RIPE
+# to generate the filterlist. 
+#
+# It supports two types of hardware, Juniper and Cisco routers
+#
+# Example:
+#  filtergen -f list.txt -t cisco -p blah
+#  filtergen -f AS-IBIS -t Juniper -p import-ebgp-ipv4-AS-IBIS
+#
+# written by andy@shady.org
+#
+# Requires: asused (/usr/ports/net-mgmt/asused)
+
+use strict;
+use Whois; # asused whois module
+use Getopt::Std;
+
+# set to 1 if debugging needed
+my $debug=1;
+
+my $bright = "\x1B[0;1;37m";
+my $normal = "\x1B[0;37m";
+my $blue = "\e[1m\e[36m";
+my $green = "\e[1m\e[32m";
+
+my %Opts;
+getopts('f:t:m:a:p:', \%Opts) or usage();
+usage() unless ($Opts{'f'} and $Opts{'t'});      
+
+sub usage 
+{
+    $0 =~ s!.*/!!;
+    my $usage = "Usage: ${blue}$0${normal} -f  $bright<AS-SET>/<prefixlist>$normal -t ${bright}<type>$normal -m ${bright}[match type] $normal -a ${bright}<action>$normal -p ${bright}[policyname]$normal
+
+Where:
+
+  ${bright}<prefixlist>$normal Text file containing list of prefixes
+  ${bright}<AS-SET>$normal     RIPE registered valid AS-SET Macro
+  ${bright}<type>$normal       Router vendor - currently supported:
+		  ${blue}1. juniper $normal
+		  ${blue}2. cisco $normal
+  ${bright}[matchtype]$normal  Type of match to be made (Juniper Only): (exact/orlonger)
+  ${bright}<action>$normal     The action of the filter: (reject/accept)
+  ${bright}[policyname]$normal Name of Policy to be generated
+	       ${bright}Default: ${green}filterlist${normal}\n";
+
+  print("$usage\n");
+  exit;
+}
+
+sub error
+{
+  my $errmsg = $_[0];
+  print "Internal Error: $errmsg\n";
+  exit;
+}
+        
+my $asn=$Opts{'f'};
+my $type=$Opts{'t'};
+my $action=$Opts{'a'};
+my $match;
+my $policyname;
+my $whois=();
+my @prefixes=();
+my %assetlist= ();
+my %processed_assetlist=();
+my %asnhash=();
+
+unless ($Opts{'p'})
+{
+  $policyname="filterlist";
+}
+else
+{
+  $policyname=$Opts{'p'};
+}
+unless ($Opts{'m'})
+{
+  $match="exact";
+}
+else
+{
+  $match=$Opts{'m'};
+}
+
+chomp($asn);
+
+# this isnt very clever, first try to
+# detect if file exists, and use that
+if( -e $asn)
+{
+  # file exists, try parsing
+  prefixlist($asn);
+  output();
+}
+else
+{
+  # no file, so attempt to query RIPE
+  # with the $asn
+  
+  # first populate the first hash item
+  $assetlist{$asn}=$asn;
+  
+  $whois = new Whois('Host' => 'whois.ripe.net');
+  die("Failed to create object") unless(ref($whois));
+  die($whois->GetError()) if($whois->GetError());
+
+  # now go through the array populating as we go
+  while (values(%assetlist) > 0) {
+  	my $key=();
+        foreach $key (keys (%assetlist))
+        {
+	  queryASset($key);
+	  $processed_assetlist{$key}=$key;
+	  delete $assetlist{$key};
+  	}
+  }
+  processASNlist(%asnhash);
+  $whois->Close();
+
+  # now take all prefixes and output
+  output();
+}
+
+
+sub prefixlist()
+{
+  my $file=$_[0];
+  open(F, $file) || error("Cant open file $file: $!");
+  while(<F>)
+  {
+    chomp;
+    next unless ( $_ =~ /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2})$/ );
+    push (@prefixes, $1);
+  }
+  return(@prefixes);
+}
+
+sub queryASset()
+{
+  my $asn = $_[0];
+  if($whois->Query($asn)) 
+  {
+    printf("Query error: %s\n", $whois->GetError());
+    exit;
+  }
+  my @result=();
+  my $result = $whois->GetResult();
+  if($result) 
+  {
+    @result=split("\n", $result); 
+    if($debug == 1)
+    {
+      printf("Results: %s", @result);
+    }
+  }
+  else 
+  {
+    if($debug == 1)
+    {
+      printf("No results: %s\n", $whois->GetError());
+    }
+  }
+  # $whois->Close();
+
+  foreach(@result)
+  {
+    my @array=();
+    next if /^[ \t]*#%/;  # skip comment lines
+    next if /^$/;         # skip empty lines
+    
+    if(@array = ($_ =~ /(AS\d{1,5})(?![\d:])/g )){for $a (0..$#array){$asnhash{$array[$a]}++; next;}}
+    elsif(@array = ($_ =~ /members:\s+(AS[\w\d\:]+)/gi))
+    { 
+      if(!exists $assetlist{$1} && !exists $processed_assetlist{$1})
+      {
+        $assetlist{$1}=$1; 
+	if($debug == 1)
+	{
+	  print "$assetlist{$1} [First Seen]\n";
+	}
+      }
+      else
+      {
+        if($debug == 1)
+        {
+          print "$assetlist{$1}$processed_assetlist{$1} [cached]\n";
+        }
+      }
+    }    
+  }
+  return(%asnhash, %assetlist);
+}
+
+sub processASNlist()
+{
+  my $key=();
+  foreach $key (sort(keys(%asnhash)))
+  {
+    if($debug == 1)
+    {
+      print "Fetching prefixes for $key\n";
+    } 
+
+    # do query on ASN for prefixes
+    if($whois->Query("-i origin $key"))
+    {
+      printf("Query error: %s\n", $whois->GetError());
+       exit;
+     }
+     my $result = $whois->GetResult();
+     my @result=();
+     @result=split("\n", $result);
+     # grab each prefix 
+     foreach(@result)
+     {
+       next unless ($_=~ /route:\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2})/);
+       push (@prefixes, $1);
+     }
+  }
+  return(@prefixes);
+}
+
+
+sub output()
+{
+  # at this point we should have @prefixes populated by either method
+  if($type=~ /[J|j]uniper/)
+  {
+    print "${bright}edit policy-options policy-statement ${green}$policyname${bright} from\n";
+    foreach(@prefixes)
+    {
+      print("\tset route-filter ${blue}$_${bright} $match\n");
+    }
+    if($action)
+    {
+      print "up\nset then ${green}$action${bright}\nexit$normal\n";
+    }
+    else
+    {
+      print "exit$normal\n";
+    }
+  }
+  elsif ($type =~ /[C|c]isco/)
+  {
+    my $seq=10;
+    foreach(@prefixes)
+    {
+      print("${bright}ip prefix-list ${green}$policyname${bright} seq $seq permit ${blue}$_${bright}\n");
+      $seq=$seq+10;
+    }
+  }
+  my $len = length @prefixes;
+  print "$len prefixes found\n";
+}

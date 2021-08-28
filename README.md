@@ -34,22 +34,16 @@ OTHER
 
 There is also a command line version included with this package.
 
-INSTALL WEB FRONT END
-There is an online version of the tool also. This is contained within a complete web site.
-The website is currently setup for AS25441 although some simple editing of header.php will change this.
-You should also look at editing the other PHP files as they contain hard coded references to AS25441 (the authors employer)
-
-1. Copy the directory www to your DocumentRoot directory
-2. Edit the .htaccess file within the subdirectory "admintools".
-3. Browse to your index page
-
-
-
-TODO
-
-Ensure type "Customer" peers are polled. This may be tricky if you allow customers to 
-deaggregate their routes whilst you reaggregate them along your edge.
-
+```bash
+./filtergen -f AS-TECHNOLABS -t juniper -p blah
+Results: % This is the RIPE Database query service.Fetching prefixes for AS43178
+edit policy-options policy-statement blah from
+        set route-filter 91.194.126.0/23 exact
+        set route-filter 91.194.126.0/24 exact
+        set route-filter 91.194.127.0/24 exact
+exit
+1 prefixes found
+```
 
 ISSUES
 
